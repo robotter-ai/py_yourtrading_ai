@@ -1,0 +1,5 @@
+schema {
+  classification: Query
+}
+
+subscription train:
