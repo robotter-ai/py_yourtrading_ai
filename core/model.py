@@ -8,44 +8,19 @@ import core.aleph as aleph
 
 
 @dataclass
-class AlephObject:
-    ref: Optional[str]
-    id: str
-
-    def __dict__(self):
-        d = super(self).__dict__
-        del d['ref']
-        return d
-
-
-@dataclass
-class Index(AlephObject):
-    refs: dict
-    datatype: Type[AlephObject]
-
-    @property
-    def items(self) -> {str: AlephObject}:
-        return aleph.get_objects(self.datatype, self.refs.values())
-
-    @property
-    def is_root(self) -> bool:
-        return self.datatype == type(self)
-
-
-@dataclass
-class Source(AlephObject):
+class Source(aleph.AlephObject):
     url: str
 
 
 @dataclass
-class Coin(AlephObject):
+class Coin(aleph.AlephObject):
     symbol: str
     name: str
     cg_id: str  # internal
     logo_url: str
     cg_url: str  # internal
     other_urls: [str]  # internal
-    dataseriesDesc_ids: [str]  # internal
+    dataseriesDesc_refs: [aleph.AlephRef]  # internal
     description: Optional[str]
 
     def __init__(self, *args):
@@ -58,11 +33,12 @@ class Coin(AlephObject):
 
     @property
     def datasets(self):
-        return aleph.get_dataseries_descs(self)
+        refs = [desc.ref for desc in self.dataseriesDesc_refs]
+        return aleph.get_objects(DataseriesDesc, refs)
 
 
 @dataclass
-class Dataseries(AlephObject):  # internal class
+class Dataseries(aleph.AlephObject):  # internal class
     values: list
     index: list
     interval: str
@@ -72,13 +48,13 @@ class Dataseries(AlephObject):  # internal class
         return pd.Series(self.values, self.index)
 
     @series.setter
-    def set_series(self, series: pd.Series):
-        self.index = series.index.tolist()
-        self.values = series.tolist()
+    def series(self, value: pd.Series):
+        self.index = value.index.tolist()
+        self.values = value.tolist()
 
 
 @dataclass
-class DataseriesDesc(AlephObject):
+class DataseriesDesc(aleph.AlephObject):
     sourceID: str
     coinID: str
     dataseriesID: str  # internal
@@ -94,7 +70,9 @@ class DataseriesDesc(AlephObject):
     description: Optional[str]
     sparkline: [float]
 
-    def __init__(self, source: Source, coin: Coin, dataseries: Dataseries, title: str, description: str = None):
+    def __init__(self, id: str, source: Source, coin: Coin, dataseries: Dataseries, title: str,
+                 description: str = None):
+        super(self).__init__(id)
         assert source.ref
         self.sourceID = source.ref
         assert coin.id
@@ -113,3 +91,11 @@ class DataseriesDesc(AlephObject):
         self.lastDate = series.index.max()
         self.description = description
         self.sparkline = series[-100:].values.tolist()
+
+
+async def get_sources() -> [Source]:
+    return aleph.get_all_objects_from_lookup(Source)
+
+
+async def get_coins() -> [Coin]:
+    return aleph.get_all_objects_from_lookup(Coin)
