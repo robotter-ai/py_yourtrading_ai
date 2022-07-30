@@ -1,7 +1,7 @@
 import asyncio
 
 import core.aleph as al
-import core.model as model
+import coin_example.model as model
 
 
 CHAN = 'DB_TEST'
@@ -20,7 +20,7 @@ async def test_get_object():
     await al.post_or_amend_object(obj)
     assert obj.ref
 
-    fetched = await al.get_object(obj.ref.item_hash)
+    fetched = await al.fetch_record(obj.ref.item_hash)
     assert obj == fetched
     print(obj)
     print(vars(obj))

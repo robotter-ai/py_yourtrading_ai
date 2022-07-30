@@ -1,5 +1,5 @@
 from dataclasses import *
-from typing import Optional, Type
+from typing import Optional
 from datetime import datetime
 
 import pandas as pd
@@ -8,12 +8,12 @@ import core.aleph as aleph
 
 
 @dataclass
-class Source(aleph.AlephObject):
+class Source(aleph.AlephRecord):
     url: str
 
 
 @dataclass
-class Coin(aleph.AlephObject):
+class Coin(aleph.AlephRecord):
     symbol: str
     name: str
     cg_id: str  # internal
@@ -34,11 +34,11 @@ class Coin(aleph.AlephObject):
     @property
     def datasets(self):
         refs = [desc.ref for desc in self.dataseriesDesc_refs]
-        return aleph.get_objects(DataseriesDesc, refs)
+        return aleph.fetch_records(DataseriesDesc, refs)
 
 
 @dataclass
-class Dataseries(aleph.AlephObject):  # internal class
+class Dataseries(aleph.AlephRecord):  # internal class
     values: list
     index: list
     interval: str
@@ -54,7 +54,7 @@ class Dataseries(aleph.AlephObject):  # internal class
 
 
 @dataclass
-class DataseriesDesc(aleph.AlephObject):
+class DataseriesDesc(aleph.AlephRecord):
     sourceID: str
     coinID: str
     dataseriesID: str  # internal
