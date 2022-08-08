@@ -1,81 +1,72 @@
-from dataclasses import dataclass, field
-from typing import Type, Optional, TypeVar, Set, Union, Dict, ClassVar
+from pydantic import BaseModel
+from typing import Type, Optional, TypeVar, Set, Union, Dict, ClassVar, List
 
 import aleph_client.asynchronous as client
 from aleph_client.chains.ethereum import get_fallback_account
-from aleph_client.vm.cache import VmCache
-
-import dacite
-import dacite.dataclasses
 
 from core.exceptions import PostTypeIsNoClassError
 
-STD_CHANNEL = 'CRYPTODATADOWNLOAD'
-cache = VmCache()
 FALLBACK_ACCOUNT = get_fallback_account()
-
 
 T = TypeVar('T', bound='AlephRecord')
 
 
-@dataclass
-class AlephRef:
-    item_hash: str
-
-    async def fetch(self) -> Dict:
-        return await client.get_posts(refs=[self.item_hash])
-
-
-@dataclass()
-class AlephRecord:
-    id: Union[str, int] = field(init=False)
-    _ref: 'AlephRef' = field(init=False, default=None)
+class AlephRecord(BaseModel):
+    id: Union[str, int] = None
+    item_hash: str = None
+    current_revision: str = None
+    revs: [str] = None
     indices: ClassVar[Dict[str, 'AlephIndex']] = {}
 
-    @property
-    def ref(self) -> 'AlephRef':
-        return self._ref
-
-    @ref.setter
-    def ref(self, aleph_ref):
-        if isinstance(aleph_ref, str):
-            self._ref = AlephRef(aleph_ref)
-        else:
-            self._ref = aleph_ref
-
-    async def refresh(self: T, ref=None) -> T:
-        if ref:
-            self.ref = ref
+    async def refresh(self: T, rev: int = None) -> T:
+        if rev:
+            if rev == 0:
+                if self.current_revision == self.item_hash:
+                    return self
+                else:
+                    self.__dict__.update((await fetch_records(type(self), [self.item_hash]))[0].__dict__)
+            if rev > len(self.revs):
+                self.revs = [post['item_hash'] for post in (await client.get_posts(refs=[self.item_hash]))['posts']]
+            try:
+                self.item_hash = self.revs[-rev]
+            except IndexError:
+                raise IndexError(f'No revision {rev} found for {self.item_hash}')
+            self.current_revision = self.revs[]
         self.__dict__.update((await self.ref.fetch()).__dict__)
         return self
 
     async def upsert(self) -> T:
         return await post_or_amend_object(self)
 
-    def as_dict(self) -> Dict:
+    def as_record(self) -> Dict:
+        """
+        :return: a data dictionary of the object, as it is to be stored on Aleph.
+        """
         d = vars(self)
         del d['_ref']
         del d['indices']
         return d
 
     @classmethod
-    def from_dict(cls: Type[T], d) -> T:
-        return dacite.from_dict(cls, d)
+    def as_schema(cls) -> Dict:
+        """
+        :return: a dictionary representation of the type.
+        """
+        return vars(cls)
 
     @classmethod
-    def get_by_index(cls, index_name: str, index_value: str) -> T:
-        return cls.indices[index_name].get_by_key(index_value)
+    def get_by_index(cls: Type[T], index: str, key: str) -> T:
+        return cls.indices[index].get_by_key(key)
 
 
-@dataclass()
-class AARSSchema(AlephRecord):
+class DatabaseSchema(AlephRecord):
     channel: str
     owner: str
     types: Set[Type[AlephRecord]]
     version: int = 1
 
     @classmethod
-    async def fetch_schema(cls, channel: str, owner: str, version: int = None) -> 'AARSSchema':
+    async def fetch_schema(cls, channel: str, owner: str, version: int = None) -> 'DatabaseSchema':
         """
         Fetches a schema from Aleph, which can be used to access active records.
         :param channel: The channel to fetch from
@@ -90,43 +81,35 @@ class AARSSchema(AlephRecord):
         else:
             return next(filter(lambda x: x.version == version, schemas), None)
 
-    async def upgrade(self):
-        """
-        Upgrades and uploads the schema to the next version.
-        :return:
-        """
-        self.version = (await self.fetch_schema(channel=self.channel, owner=self.owner)).version + 1
-        await post_or_amend_object(self, account=self.owner, channel=self.channel)
+    async def upsert(self: T) -> T:
+        """Upgrades and uploads the schema to the next version."""
+        schema = await self.fetch_schema(channel=self.channel, owner=self.owner)
+        if schema is not None:
+            self.version = schema.version + 1
+        return await post_or_amend_object(self, account=self.owner, channel=self.channel)
+
+    def add_type(self, type_: Type[AlephRecord]):
+        if type_ in self.types():
+            return
+        self.types[type_.__name__] = type_
+        name = type_.__name__ + '_id'
+        self.indices[name] = AlephIndex(datatype=type_, name=name)
 
 
-@dataclass
 class AlephIndex(AlephRecord):
     datatype: Type[AlephRecord]
-    refs: Dict[str, AlephRef] = field(init=False, default_factory=dict)
+    name: str
+    hashmap: Dict[str, str] = {}
 
     @property
-    async def items(self) -> {str: AlephRecord}:
-        return await fetch_records(self.datatype, self.refs.values())
+    async def items(self) -> List[AlephRecord]:
+        return await fetch_records(self.datatype, list(self.hashmap.values()))
 
     async def get_by_key(self, value: str) -> AlephRecord:
-        return self.datatype.from_dict(await self.refs[value].fetch())
+        return (await fetch_records(self.datatype, [self.hashmap[value]]))[0]
 
-
-async def post_objects_in_index(account, objs: [T], channel: str = STD_CHANNEL) -> Optional[AlephIndex]:
-    if len(objs) == 0:
-        return None
-
-    name = type(objs[0]).__name__
-    index = dacite.from_dict(AlephIndex, await cache.get(f'Index({name})'))
-    if index is None:
-        index = AlephIndex(keys=objs[0], refs={}, datatype=objs[0].__class__)
-    for obj in objs:
-        await post_or_amend_object(account, obj, channel)
-        index.refs = {obj.id: obj.ref}
-    resp = await client.create_post(account, index, post_type=f'Index({name})', channel=channel, ref=index.ref)
-    index.ref = resp['item_hash']
-    await cache.set(f'Index({name})', str(dict(index)))
-    return index.ref
+    def add_item(self, key: str, item_hash: str):
+        self.hashmap[key] = item_hash
 
 
 async def post_or_amend_object(obj: T, account=None, channel: str = STD_CHANNEL) -> T:
@@ -145,54 +128,20 @@ async def post_or_amend_object(obj: T, account=None, channel: str = STD_CHANNEL)
     return obj
 
 
-async def get_all_objects_from_lookup(datatype: Type[T], channel: str = STD_CHANNEL) -> [T]:
-    """
-    Implements a caching and retrieval mechanism for objects stored on the Aleph chain,
-    whose item hashes (refs) were bundled in an according Index message. An Index is a dict
-    containing a describing and unique key, with a ref hash as value.
-    :param datatype:
-    :param channel:
-    :return:
-    """
-    name = datatype.__name__
-    objects = dacite.from_dict(datatype, await cache.get(name))
-    if objects is None:
-        lookup_resp = await client.get_posts(channels=[channel], types=[f'Index({name})'])
-        refs = lookup_resp['posts'][0]['content'].values()
-        objects_resp = await client.get_posts(refs=refs)
-        objects = [dacite.from_dict(datatype, post['content']) for post in objects_resp]
-        await cache.set(name, str(objects.__dict__))
-    else:
-        objects = [datatype.from_dict(data) for data in objects]
-
-    return objects
-
-
-async def fetch_record(ref: str, channel: str = None, owner: str = None) -> T:
-    """Retrieves a single object by its aleph item_hash.
-    :param ref: Aleph item_hash
+async def fetch_records(datatype: Type[T],
+                        item_hashes: List[str] = None,
+                        channel: str = None,
+                        owner: str = None) -> List[T]:
+    """Retrieves posts as objects by its aleph item_hash.
+    :param datatype: The type of the objects to retrieve.
+    :param item_hashes: Aleph item_hashes of the objects to fetch.
     :param channel: Channel in which to look for it.
     :param owner: Account that owns the object."""
     channels = None if channel is None else [channel]
     owners = None if owner is None else [owner]
-    resp = await client.get_posts(hashes=[ref], channels=channels, addresses=owners)
-    post = resp['posts'][0]
-    try:
-        print(globals())
-        return dacite.from_dict(globals()[post['type']], post['content'])
-    except KeyError:
-        print(post)
-        raise PostTypeIsNoClassError(post['content'])
-
-
-async def fetch_records(
-        datatype: Type[T],
-        refs: [str] = None,
-        channel: str = None,
-        owner: str = None
-) -> [T]:
-    channels = None if channel is None else [channel]
-    owners = None if owner is None else [owner]
-    objects_resp = await client.get_posts(refs=refs, channels=channels, types=[datatype.__name__], addresses=owners)
-    objects = [dacite.from_dict(datatype, post['content']['content']) for post in objects_resp]
+    if item_hashes is None and channels is None and owners is None:
+        raise ValueError('At least one of item_hashes, channel, or owner must be specified')
+    objects_resp = await client.get_posts(hashes=item_hashes, channels=channels, types=[datatype.__name__],
+                                          addresses=owners)
+    objects = [datatype(**post['content']['content']) for post in objects_resp]
     return objects

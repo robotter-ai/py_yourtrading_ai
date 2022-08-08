@@ -4,8 +4,7 @@ class AlephError(Exception):
 
 
 class PostTypeIsNoClassError(AlephError):
-    """Exception raised when a received post_type is not resolvable to any python class in current runtime.
-    """
+    """Exception raised when a received post_type is not resolvable to any python class in current runtime."""
 
     def __init__(self, content, message="Received post_type '{0}' from channel '{1}' does not currently exist as a class."):
         self.post_type = content['type']
@@ -18,11 +17,20 @@ class PostTypeIsNoClassError(AlephError):
 
 
 class InvalidMessageTypeError(AlephError):
-    """Exception raised when program received a different message type than expected.
-    """
+    """Exception raised when program received a different message type than expected."""
 
     def __init__(self, received, expected, message="Expected message type '{0}' but actually received '{1}'"):
         self.received = received
         self.expected = expected
         self.message = f"{message.format(self.expected, self.received)}"
+        super().__init__(self.message)
+
+
+class SchemaAlreadyExists(AlephError):
+    """Exception raised when user tries to update a schema that already exists, without incrementing the version."""
+
+    def __init__(self, schema, message="Schema for channel '{0}' and owner '{1}' already exists. Try using upgrade() instead."):
+        self.channel = schema['channel']
+        self.owner = schema['owner']
+        self.message = f"{message.format(self.channel, self.owner)}"
         super().__init__(self.message)
