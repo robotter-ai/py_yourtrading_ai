@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Type, TypeVar, Set, Union, Dict, ClassVar, List
+from typing import Type, TypeVar, Dict, ClassVar, List
 
 import aleph_client.asynchronous as client
 from aleph_client.chains.ethereum import get_fallback_account
@@ -10,11 +10,13 @@ T = TypeVar('T', bound='AlephRecord')
 
 
 class AlephRecord(BaseModel):
-    id: Union[str, int] = None
     item_hash: str = None
     current_revision: int = None
     revision_hashes: List[str] = None
     indices: ClassVar[Dict[str, 'AlephIndex']] = {}
+
+    def __repr__(self):
+        return f'{type(self).__name__}({self.item_hash})'
 
     @property
     def content(self) -> Dict:
@@ -38,31 +40,35 @@ class AlephRecord(BaseModel):
         :param rev_no: the revision number of the revision to fetch.
         :param rev_hash: the hash of the revision to fetch.
         """
-        previous_revision = self.current_revision
         if rev_no is not None:
             if rev_no < 0:
                 rev_no = len(self.revision_hashes) + rev_no
             if self.current_revision == rev_no:
                 return self
             elif rev_no > len(self.revision_hashes):
-                raise IndexError(f'No revision no. {rev_no} found for {self.item_hash}')
+                raise IndexError(f'No revision no. {rev_no} found for {self}')
             else:
                 self.current_revision = rev_no
         elif rev_hash is not None:
             try:
                 self.current_revision = self.revision_hashes.index(rev_hash)
             except ValueError:
-                raise IndexError(f'{rev_hash} is not a revision of {self.item_hash}')
+                raise IndexError(f'{rev_hash} is not a revision of {self}')
         else:
             raise ValueError('Either rev or hash must be provided')
 
-        if previous_revision != self.current_revision:
-            self.__dict__.update((await fetch_records(type(self), item_hashes=[self.item_hash]))[0].__dict__)
+        # always fetch from aleph
+        self.__dict__.update((await fetch_records(type(self), item_hashes=[self.item_hash]))[0].content)
 
         return self
 
-    async def upsert(self) -> T:
-        return await post_or_amend_object(self)
+    async def upsert(self):
+        await post_or_amend_object(self)
+        if self.current_revision == 0:
+            [index.add_item(self) for index in self.indices.values()]
+
+    async def forget(self):
+        await forget_object(self)
 
     @classmethod
     def create(cls: Type[T], **kwargs) -> T:
@@ -71,7 +77,11 @@ class AlephRecord(BaseModel):
 
     @classmethod
     def query(cls: Type[T], key: str, index: str = 'item_hash') -> List[T]:
-        return cls.indices[index].get_by_key(key)
+        return cls.indices[index].fetch_by_key(key)
+
+    @classmethod
+    def add_index(cls: Type[T], index: 'AlephIndex') -> None:
+        cls.indices[index.name] = index
 
 
 class AlephIndex(AlephRecord):
@@ -79,61 +89,26 @@ class AlephIndex(AlephRecord):
     name: str
     hashmap: Dict[str, str] = {}
 
-    @property
-    async def items(self) -> List[AlephRecord]:
-        return await fetch_records(self.datatype, list(self.hashmap.values()))
+    async def fetch_items(self) -> List[AlephRecord]:
+        return await fetch_records(self.datatype, list(set(self.hashmap.values())))
 
-    async def get_by_key(self, key: str) -> AlephRecord:
+    async def fetch_by_key(self, key: str) -> AlephRecord:
         return (await fetch_records(self.datatype, [self.hashmap[key]]))[0]
 
-    def add_item(self, key: str, item_hash: str):
-        self.hashmap[key] = item_hash
-
-
-class DatabaseSchema(AlephRecord):
-    channel: str
-    owner: str
-    types: Set[Type[AlephRecord]]
-    version: int = 1
-
-    @classmethod
-    async def fetch_schema(cls, channel: str, owner: str, version: int = None) -> 'DatabaseSchema':
+    def add_item(self, item_hash: str):
         """
-        Fetches a schema from Aleph, which can be used to access active records.
-        :param channel: The channel to fetch from
-        :param owner: Address of the owner of the schema. It must be supplemented, as anyone can upload a schema for your channel.
-        :param version: The version of the schema to fetch. If None, will fetch the latest
-        :return: Instance of AARSSchema
+        Adds an item to the index. Intended to be overridden by subclasses.
         """
-        schemas = (await fetch_records(datatype=cls, channel=channel, owner=owner))
-        if version is None:
-            schemas.sort(key=lambda x: x.version)
-            return schemas[-1]
-        else:
-            return next(filter(lambda x: x.version == version, schemas), None)
-
-    async def upsert(self: T) -> T:
-        """Upgrades and uploads the schema to the next version."""
-        schema = await self.fetch_schema(channel=self.channel, owner=self.owner)
-        if schema is not None:
-            self.version = schema.version + 1
-        return await post_or_amend_object(self, account=self.owner, channel=self.channel)
-
-    def add_type(self, type_: Type[AlephRecord]):
-        if type_ in self.types():
-            return
-        self.types[type_.__name__] = type_
-        name = type_.__name__ + '_id'
-        self.indices[name] = AlephIndex(datatype=type_, name=name)
+        self.hashmap[item_hash] = item_hash
 
 
-async def post_or_amend_object(obj: T, account=None, channel: str = None) -> T:
+async def post_or_amend_object(obj: T, account=None, channel: str = None):
     """
     Posts or amends an object to Aleph. If the object is already posted, it's ref is updated.
-    :param obj:
-    :param account:
-    :param channel:
-    :return:
+    :param obj: The object to post or amend.
+    :param account: The account to post the object with. If None, will use the fallback account.
+    :param channel: The channel to post the object to. If None, will use the TEST channel of the object.
+    :return: The object, as it is now on Aleph.
     """
     if account is None:
         account = FALLBACK_ACCOUNT
@@ -141,7 +116,19 @@ async def post_or_amend_object(obj: T, account=None, channel: str = None) -> T:
     resp = await client.create_post(account, obj.content, post_type=name, channel=channel, ref=obj.item_hash)
     obj.revision_hashes.append(resp['item_hash'])
     obj.current_revision = len(obj.revision_hashes) - 1
-    return obj
+
+
+async def forget_object(obj: T, account=None, channel: str = None):
+    """
+    Deletes an object from Aleph.
+    :param obj: The object to delete.
+    :param account: The account to delete the object with. If None, will use the fallback account.
+    :param channel: The channel to delete the object from. If None, will use the TEST channel of the object.
+    """
+    if account is None:
+        account = FALLBACK_ACCOUNT
+    hashes = [obj.item_hash] + obj.revision_hashes
+    await client.forget(account, hashes, reason=None, channel=channel)
 
 
 async def fetch_records(datatype: Type[T],
