@@ -1,6 +1,8 @@
+from abc import ABC
+
 from aleph_client.types import Account
 from pydantic import BaseModel
-from typing import Type, TypeVar, Dict, ClassVar, List, Optional, Set
+from typing import Type, TypeVar, Dict, ClassVar, List, Optional, Set, Any, Union
 
 import aleph_client.asynchronous as client
 from aleph_client.chains.ethereum import get_fallback_account
@@ -10,29 +12,31 @@ FALLBACK_ACCOUNT = get_fallback_account()
 T = TypeVar('T', bound='AlephRecord')
 
 
-class Record(BaseModel):
+class Record(BaseModel, ABC):
     """
-    A basic record which is persisted on Aleph decentralized storage. Can be updated and forgotten. Revision numbers
-    begin at 0 (original upload) and increment for each `upsert()` call. Previous revisions can be restored by calling
-    `fetch_revision(rev_no=<number>)` or `fetch_revision(rev_hash=<item_hash of inserted update>)`.
+    A basic record which is persisted on Aleph decentralized storage.
+
+    Can be updated and forgotten. Revision numbers begin at 0 (original upload) and increment for each `upsert()` call.
+
+    Previous revisions can be restored by calling `fetch_revision(rev_no=<number>)` or `fetch_revision(
+    rev_hash=<item_hash of inserted update>)`.
+
+    Records have an `indices` class attribute, which allows one to select an index and query it with a key.
     """
     item_hash: str = None
     current_revision: int = None
     revision_hashes: List[str] = None
+    __indices: ClassVar[Dict[str, 'Index']] = {}
 
     def __repr__(self):
         return f'{type(self).__name__}({self.item_hash})'
 
     @property
-    def content(self) -> Dict:
+    def content(self) -> Dict[str, Any]:
         """
         :return: content dictionary of the object, as it is to be stored on Aleph.
         """
-        d = vars(self)
-        del d['item_hash']
-        del d['current_revision']
-        del d['revision_hashes']
-        return d
+        return self.dict(exclude={'item_hash', 'current_revision', 'revision_hashes', 'indices'})
 
     async def update_revision_hashes(self: T):
         posts = await fetch_revisions(type(self), ref=self.item_hash)
@@ -68,48 +72,48 @@ class Record(BaseModel):
 
     async def upsert(self):
         await post_or_amend_object(self)
+        if self.current_revision == 0:
+            [index.add(self) for index in self.__indices.values()]
 
     async def forget(self):
         await forget_object(self)
 
     @classmethod
-    def create(cls: Type[T], **kwargs) -> T:
+    async def create(cls: Type[T], **kwargs) -> T:
         obj = cls(**kwargs)
-        return obj.upsert()
-
-
-class Indexable(Record):
-    """
-    Indexable Records have an `indices` class attribute, which allows one to select an index and query it with a key.
-    """
-    indices: ClassVar[Dict[str, 'Index']] = {}
-
-    @property
-    def content(self) -> Dict:
-        d = super(Indexable, self).content
-        del d['indices']
-        return d
-
-    async def upsert(self):
-        await post_or_amend_object(self)
-        if self.current_revision == 0:
-            [index.add_item(self) for index in self.indices.values()]
+        return await obj.upsert()
 
     @classmethod
-    def query(cls: Type[T], key: str, index: Optional[str] = 'item_hash') -> List[T]:
-        return cls.indices[index].fetch_by_key(key)
+    async def query(cls: Type[T], keys: Union[str, List[str]], index: Optional[str] = 'item_hash') -> List[T]:
+        if not isinstance(keys, List):
+            keys = [keys]
+        return await cls.__indices[index].fetch(keys)
 
     @classmethod
     def add_index(cls: Type[T], index: 'Index') -> None:
-        cls.indices[index.name] = index
+        cls.__indices[repr(index)] = index
 
 
 class Index(Record):
-    datatype: Type[Indexable]
-    name: str
+    # TODO: multi-key index
+    """
+    Class to define Indices.
+    """
+    datatype: Type[T]
+    index_on: str
     hashmap: Dict[str, str] = {}
 
-    async def query(self, keys: List[str] = None) -> List[Indexable]:
+    def __init__(self, datatype: Type[T], index_on: str):
+        super(Index, self).__init__(datatype=datatype, index_on=index_on)
+        datatype.add_index(self)
+
+    def __str__(self):
+        return f"Index({self.datatype.__name__}.{self.index_on})"
+
+    def __repr__(self):
+        return f"{self.datatype.__name__}.{self.index_on}"
+
+    async def fetch(self, keys: List[str] = None) -> List[Record]:
         hashes: Set[str]
         if keys is None:
             hashes = set(self.hashmap.values())
@@ -118,11 +122,15 @@ class Index(Record):
 
         return await fetch_records(self.datatype, list(hashes))
 
-    def add_item(self, item_hash: str):
-        """
-        Adds an item to the index. Intended to be overridden by subclasses.
-        """
-        self.hashmap[item_hash] = item_hash
+    def add(self, obj: T):
+        assert isinstance(obj, Record)
+        self.hashmap[getattr(obj, self.index_on)] = obj.item_hash
+
+
+class ItemHashIndex(Index):
+    def add(self, obj: T):
+        assert isinstance(obj, Record)
+        self.hashmap[obj.item_hash] = obj.item_hash
 
 
 async def post_or_amend_object(obj: T, account=None, channel: str = None):
