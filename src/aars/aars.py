@@ -1,5 +1,6 @@
+from aleph_client.types import Account
 from pydantic import BaseModel
-from typing import Type, TypeVar, Dict, ClassVar, List
+from typing import Type, TypeVar, Dict, ClassVar, List, Optional, Set
 
 import aleph_client.asynchronous as client
 from aleph_client.chains.ethereum import get_fallback_account
@@ -9,11 +10,15 @@ FALLBACK_ACCOUNT = get_fallback_account()
 T = TypeVar('T', bound='AlephRecord')
 
 
-class AlephRecord(BaseModel):
+class Record(BaseModel):
+    """
+    A basic record which is persisted on Aleph decentralized storage. Can be updated and forgotten. Revision numbers
+    begin at 0 (original upload) and increment for each `upsert()` call. Previous revisions can be restored by calling
+    `fetch_revision(rev_no=<number>)` or `fetch_revision(rev_hash=<item_hash of inserted update>)`.
+    """
     item_hash: str = None
     current_revision: int = None
     revision_hashes: List[str] = None
-    indices: ClassVar[Dict[str, 'AlephIndex']] = {}
 
     def __repr__(self):
         return f'{type(self).__name__}({self.item_hash})'
@@ -27,7 +32,6 @@ class AlephRecord(BaseModel):
         del d['item_hash']
         del d['current_revision']
         del d['revision_hashes']
-        del d['indices']
         return d
 
     async def update_revision_hashes(self: T):
@@ -64,8 +68,6 @@ class AlephRecord(BaseModel):
 
     async def upsert(self):
         await post_or_amend_object(self)
-        if self.current_revision == 0:
-            [index.add_item(self) for index in self.indices.values()]
 
     async def forget(self):
         await forget_object(self)
@@ -75,25 +77,46 @@ class AlephRecord(BaseModel):
         obj = cls(**kwargs)
         return obj.upsert()
 
+
+class Indexable(Record):
+    """
+    Indexable Records have an `indices` class attribute, which allows one to select an index and query it with a key.
+    """
+    indices: ClassVar[Dict[str, 'Index']] = {}
+
+    @property
+    def content(self) -> Dict:
+        d = super(Indexable, self).content
+        del d['indices']
+        return d
+
+    async def upsert(self):
+        await post_or_amend_object(self)
+        if self.current_revision == 0:
+            [index.add_item(self) for index in self.indices.values()]
+
     @classmethod
-    def query(cls: Type[T], key: str, index: str = 'item_hash') -> List[T]:
+    def query(cls: Type[T], key: str, index: Optional[str] = 'item_hash') -> List[T]:
         return cls.indices[index].fetch_by_key(key)
 
     @classmethod
-    def add_index(cls: Type[T], index: 'AlephIndex') -> None:
+    def add_index(cls: Type[T], index: 'Index') -> None:
         cls.indices[index.name] = index
 
 
-class AlephIndex(AlephRecord):
-    datatype: Type[AlephRecord]
+class Index(Record):
+    datatype: Type[Indexable]
     name: str
     hashmap: Dict[str, str] = {}
 
-    async def fetch_items(self) -> List[AlephRecord]:
-        return await fetch_records(self.datatype, list(set(self.hashmap.values())))
+    async def query(self, keys: List[str] = None) -> List[Indexable]:
+        hashes: Set[str]
+        if keys is None:
+            hashes = set(self.hashmap.values())
+        else:
+            hashes = set([self.hashmap[key] for key in keys])
 
-    async def fetch_by_key(self, key: str) -> AlephRecord:
-        return (await fetch_records(self.datatype, [self.hashmap[key]]))[0]
+        return await fetch_records(self.datatype, list(hashes))
 
     def add_item(self, item_hash: str):
         """
@@ -118,7 +141,7 @@ async def post_or_amend_object(obj: T, account=None, channel: str = None):
     obj.current_revision = len(obj.revision_hashes) - 1
 
 
-async def forget_object(obj: T, account=None, channel: str = None):
+async def forget_object(obj: T, account: Account = None, channel: str = None):
     """
     Deletes an object from Aleph.
     :param obj: The object to delete.
