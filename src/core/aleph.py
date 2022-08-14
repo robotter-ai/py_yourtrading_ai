@@ -1,10 +1,8 @@
 from pydantic import BaseModel
-from typing import Type, Optional, TypeVar, Set, Union, Dict, ClassVar, List
+from typing import Type, TypeVar, Set, Union, Dict, ClassVar, List
 
 import aleph_client.asynchronous as client
 from aleph_client.chains.ethereum import get_fallback_account
-
-from core.exceptions import PostTypeIsNoClassError
 
 FALLBACK_ACCOUNT = get_fallback_account()
 
@@ -14,25 +12,36 @@ T = TypeVar('T', bound='AlephRecord')
 class AlephRecord(BaseModel):
     id: Union[str, int] = None
     item_hash: str = None
-    current_revision: str = None
-    revs: [str] = None
+    current_revision: int = None
+    revs: List[str] = None
     indices: ClassVar[Dict[str, 'AlephIndex']] = {}
 
-    async def refresh(self: T, rev: int = None) -> T:
-        if rev:
-            if rev == 0:
-                if self.current_revision == self.item_hash:
-                    return self
-                else:
-                    self.__dict__.update((await fetch_records(type(self), [self.item_hash]))[0].__dict__)
-            if rev > len(self.revs):
-                self.revs = [post['item_hash'] for post in (await client.get_posts(refs=[self.item_hash]))['posts']]
+    async def fetch_revisions(self: T):
+        posts = await fetch_revisions(type(self), ref=self.item_hash)
+        self.revs = [post['item_hash'] for post in posts]
+
+    async def fetch(self: T, rev: int = None, hash: str = None) -> T:
+        previous_revision = self.current_revision
+        if rev is not None:
+            if rev < 0:
+                rev = len(self.revs) + rev
+            if self.current_revision == rev:
+                return self
+            elif rev > len(self.revs):
+                raise IndexError(f'No revision no. {rev} found for {self.item_hash}')
+            else:
+                self.current_revision = rev
+        elif hash is not None:
             try:
-                self.item_hash = self.revs[-rev]
-            except IndexError:
-                raise IndexError(f'No revision {rev} found for {self.item_hash}')
-            self.current_revision = self.revs[]
-        self.__dict__.update((await self.ref.fetch()).__dict__)
+                self.current_revision = self.revs.index(hash)
+            except ValueError:
+                raise IndexError(f'{hash} is not a revision of {self.item_hash}')
+        else:
+            raise ValueError('Either rev or hash must be provided')
+
+        if previous_revision != self.current_revision:
+            self.__dict__.update((await fetch_records(type(self), item_hashes=[self.item_hash]))[0].__dict__)
+
         return self
 
     async def upsert(self) -> T:
@@ -48,15 +57,29 @@ class AlephRecord(BaseModel):
         return d
 
     @classmethod
-    def as_schema(cls) -> Dict:
-        """
-        :return: a dictionary representation of the type.
-        """
-        return vars(cls)
+    def create(cls: Type[T], **kwargs) -> T:
+        obj = cls(**kwargs)
+        return obj.upsert()
 
     @classmethod
-    def get_by_index(cls: Type[T], index: str, key: str) -> T:
+    def query(cls: Type[T], key: str, index: str = 'item_hash') -> List[T]:
         return cls.indices[index].get_by_key(key)
+
+
+class AlephIndex(AlephRecord):
+    datatype: Type[AlephRecord]
+    name: str
+    hashmap: Dict[str, str] = {}
+
+    @property
+    async def items(self) -> List[AlephRecord]:
+        return await fetch_records(self.datatype, list(self.hashmap.values()))
+
+    async def get_by_key(self, key: str) -> AlephRecord:
+        return (await fetch_records(self.datatype, [self.hashmap[key]]))[0]
+
+    def add_item(self, key: str, item_hash: str):
+        self.hashmap[key] = item_hash
 
 
 class DatabaseSchema(AlephRecord):
@@ -96,22 +119,6 @@ class DatabaseSchema(AlephRecord):
         self.indices[name] = AlephIndex(datatype=type_, name=name)
 
 
-class AlephIndex(AlephRecord):
-    datatype: Type[AlephRecord]
-    name: str
-    hashmap: Dict[str, str] = {}
-
-    @property
-    async def items(self) -> List[AlephRecord]:
-        return await fetch_records(self.datatype, list(self.hashmap.values()))
-
-    async def get_by_key(self, value: str) -> AlephRecord:
-        return (await fetch_records(self.datatype, [self.hashmap[value]]))[0]
-
-    def add_item(self, key: str, item_hash: str):
-        self.hashmap[key] = item_hash
-
-
 async def post_or_amend_object(obj: T, account=None, channel: str = STD_CHANNEL) -> T:
     """
     Posts or amends an object to Aleph. If the object is already posted, it's ref is updated.
@@ -145,3 +152,17 @@ async def fetch_records(datatype: Type[T],
                                           addresses=owners)
     objects = [datatype(**post['content']['content']) for post in objects_resp]
     return objects
+
+
+async def fetch_revisions(datatype: Type[T],
+                          ref: str,
+                          channel: str = None,
+                          owner: str = None) -> List[T]:
+    """Retrieves posts of revisions of an object by its item_hash.
+    :param datatype: The type of the objects to retrieve.
+    :param ref: item_hash of the object, whose revisions to fetch.
+    :param channel: Channel in which to look for it.
+    :param owner: Account that owns the object."""
+    channels = None if channel is None else [channel]
+    owners = None if owner is None else [owner]
+    return await client.get_posts(refs=[ref], channels=channels, types=[datatype.__name__], addresses=owners)
