@@ -13,29 +13,46 @@ class AlephRecord(BaseModel):
     id: Union[str, int] = None
     item_hash: str = None
     current_revision: int = None
-    revs: List[str] = None
+    revision_hashes: List[str] = None
     indices: ClassVar[Dict[str, 'AlephIndex']] = {}
 
-    async def fetch_revisions(self: T):
-        posts = await fetch_revisions(type(self), ref=self.item_hash)
-        self.revs = [post['item_hash'] for post in posts]
+    @property
+    def content(self) -> Dict:
+        """
+        :return: content dictionary of the object, as it is to be stored on Aleph.
+        """
+        d = vars(self)
+        del d['item_hash']
+        del d['current_revision']
+        del d['revision_hashes']
+        del d['indices']
+        return d
 
-    async def fetch(self: T, rev: int = None, hash: str = None) -> T:
+    async def update_revision_hashes(self: T):
+        posts = await fetch_revisions(type(self), ref=self.item_hash)
+        self.revision_hashes = [post['item_hash'] for post in posts]
+
+    async def fetch_revision(self: T, rev_no: int = None, rev_hash: str = None) -> T:
+        """
+        Fetches a revision of the object by revision number (0 => original) or revision hash.
+        :param rev_no: the revision number of the revision to fetch.
+        :param rev_hash: the hash of the revision to fetch.
+        """
         previous_revision = self.current_revision
-        if rev is not None:
-            if rev < 0:
-                rev = len(self.revs) + rev
-            if self.current_revision == rev:
+        if rev_no is not None:
+            if rev_no < 0:
+                rev_no = len(self.revision_hashes) + rev_no
+            if self.current_revision == rev_no:
                 return self
-            elif rev > len(self.revs):
-                raise IndexError(f'No revision no. {rev} found for {self.item_hash}')
+            elif rev_no > len(self.revision_hashes):
+                raise IndexError(f'No revision no. {rev_no} found for {self.item_hash}')
             else:
-                self.current_revision = rev
-        elif hash is not None:
+                self.current_revision = rev_no
+        elif rev_hash is not None:
             try:
-                self.current_revision = self.revs.index(hash)
+                self.current_revision = self.revision_hashes.index(rev_hash)
             except ValueError:
-                raise IndexError(f'{hash} is not a revision of {self.item_hash}')
+                raise IndexError(f'{rev_hash} is not a revision of {self.item_hash}')
         else:
             raise ValueError('Either rev or hash must be provided')
 
@@ -46,15 +63,6 @@ class AlephRecord(BaseModel):
 
     async def upsert(self) -> T:
         return await post_or_amend_object(self)
-
-    def as_record(self) -> Dict:
-        """
-        :return: a data dictionary of the object, as it is to be stored on Aleph.
-        """
-        d = vars(self)
-        del d['_ref']
-        del d['indices']
-        return d
 
     @classmethod
     def create(cls: Type[T], **kwargs) -> T:
@@ -130,9 +138,9 @@ async def post_or_amend_object(obj: T, account=None, channel: str = None) -> T:
     if account is None:
         account = FALLBACK_ACCOUNT
     name = type(obj).__name__
-    resp = await client.create_post(account, obj.as_record(), post_type=name, channel=channel, ref=obj.item_hash)
-    obj.revs.append(resp['item_hash'])
-    obj.current_revision = len(obj.revs) - 1
+    resp = await client.create_post(account, obj.content, post_type=name, channel=channel, ref=obj.item_hash)
+    obj.revision_hashes.append(resp['item_hash'])
+    obj.current_revision = len(obj.revision_hashes) - 1
     return obj
 
 
@@ -158,7 +166,7 @@ async def fetch_records(datatype: Type[T],
 async def fetch_revisions(datatype: Type[T],
                           ref: str,
                           channel: str = None,
-                          owner: str = None) -> List[T]:
+                          owner: str = None) -> List[Dict]:
     """Retrieves posts of revisions of an object by its item_hash.
     :param datatype: The type of the objects to retrieve.
     :param ref: item_hash of the object, whose revisions to fetch.
