@@ -119,7 +119,7 @@ class DatabaseSchema(AlephRecord):
         self.indices[name] = AlephIndex(datatype=type_, name=name)
 
 
-async def post_or_amend_object(obj: T, account=None, channel: str = STD_CHANNEL) -> T:
+async def post_or_amend_object(obj: T, account=None, channel: str = None) -> T:
     """
     Posts or amends an object to Aleph. If the object is already posted, it's ref is updated.
     :param obj:
@@ -130,8 +130,9 @@ async def post_or_amend_object(obj: T, account=None, channel: str = STD_CHANNEL)
     if account is None:
         account = FALLBACK_ACCOUNT
     name = type(obj).__name__
-    resp = await client.create_post(account, obj.__dict__, post_type=name, channel=channel, ref=obj.ref)
-    obj.ref = resp['item_hash']
+    resp = await client.create_post(account, obj.as_record(), post_type=name, channel=channel, ref=obj.item_hash)
+    obj.revs.append(resp['item_hash'])
+    obj.current_revision = len(obj.revs) - 1
     return obj
 
 
