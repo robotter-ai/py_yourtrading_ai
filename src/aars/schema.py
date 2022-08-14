@@ -1,12 +1,12 @@
 from typing import Type, Set
 
-from src.aleph_record import AlephRecord, fetch_records, AlephIndex
+from src.aars import Record, fetch_records, Index
 
 
-class DatabaseSchema(AlephRecord):
+class DatabaseSchema(Record):
     channel: str
     owner: str
-    types: Set[Type[AlephRecord]]
+    types: Set[Type[Record]]
     version: int = 1
 
     @classmethod
@@ -32,9 +32,9 @@ class DatabaseSchema(AlephRecord):
             self.version = schema.version + 1
         return self
 
-    def add_type(self, type_: Type[AlephRecord]):
+    def add_type(self, type_: Type[Record]):
         if type_ in self.types():
             return
         self.types[type_.__name__] = type_
         name = type_.__name__ + '_id'
-        self.indices[name] = AlephIndex(datatype=type_, name=name)
+        self.indices[name] = Index(datatype=type_, name=name)

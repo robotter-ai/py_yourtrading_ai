@@ -5,11 +5,16 @@ AARS's goal is to provide simple guardrails for the creation of document databas
 You can create a model of your planned database by using the `AlephRecord` class.
 
 ```python
-from src.aleph_record import AlephRecord
+from src.aars import Record
 
-class Book(AlephRecord):
+
+class Book(Record):
     title: str
     author: str
+
+
+new_book = Book.create(title='Atlas Shrugged', author='Ayn Rand')
+Book.query()
 ```
 
 ## TODO

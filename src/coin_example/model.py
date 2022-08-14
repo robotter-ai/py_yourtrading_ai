@@ -8,12 +8,12 @@ import core.aleph as aleph
 
 
 @dataclass
-class Source(aleph.AlephRecord):
+class Source(aleph.Record):
     url: str
 
 
 @dataclass
-class Coin(aleph.AlephRecord):
+class Coin(aleph.Record):
     symbol: str
     name: str
     cg_id: str  # internal
@@ -38,7 +38,7 @@ class Coin(aleph.AlephRecord):
 
 
 @dataclass
-class Dataseries(aleph.AlephRecord):  # internal class
+class Dataseries(aleph.Record):  # internal class
     values: list
     index: list
     interval: str
@@ -54,7 +54,7 @@ class Dataseries(aleph.AlephRecord):  # internal class
 
 
 @dataclass
-class DataseriesDesc(aleph.AlephRecord):
+class DataseriesDesc(aleph.Record):
     sourceID: str
     coinID: str
     dataseriesID: str  # internal
