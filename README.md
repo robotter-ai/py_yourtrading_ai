@@ -24,10 +24,12 @@ assert new_book == (await Book.query('Atlas Shrugged', 'Book.title'))[0]
 
 ## ToDo:
 - [x] Basic CRUD operations
-- [x] Basic indexing operations
+- [ ] Basic indexing operations
+  - [x] Single-key indexing 
+  - [ ] Multi-key indexing
 - [ ] Basic search/filtering operations
 - [ ] Handle pagination
 - [ ] Handle sorting
 - [ ] Encapsulate Aleph SDK as class
-- [ ] Add tests
+- [ ] (IN PROGRESS) Add tests
 - [ ] (IN PROGRESS) Add documentation
