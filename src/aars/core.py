@@ -113,6 +113,8 @@ class Record(BaseModel, ABC):
     async def query(cls: Type[T], keys: Union[str, List[str]], index: Optional[str] = 'item_hash') -> List[T]:
         if not isinstance(keys, List):
             keys = [keys]
+        if cls.__indices.get(index) is None:
+            raise ValueError(f'No index "{index}" found for {cls}')
         return await cls.__indices[index].fetch(keys)
 
     @classmethod
@@ -153,13 +155,7 @@ class Index(Record):
         self.hashmap[getattr(obj, self.index_on)] = obj.item_hash
 
 
-class ItemHashIndex(Index):
-    def add(self, obj: T):
-        assert isinstance(obj, Record)
-        self.hashmap[obj.item_hash] = obj.item_hash
-
-
-async def post_or_amend_object(obj: T, account=None, channel: str = None):
+async def post_or_amend_object(obj: T, account=None, channel=None):
     """
     Posts or amends an object to Aleph. If the object is already posted, it's ref is updated.
     :param obj: The object to post or amend.
