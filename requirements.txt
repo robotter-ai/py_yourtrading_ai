@@ -1,6 +1,4 @@
-fastapi~=0.79.0
-asyncio~=3.4.3
-pydantic~=1.9.2
+pydantic~=1.9.0
 certifi~=2022.6.15
 aiohttp~=3.8.1
 pytest~=7.1.2
