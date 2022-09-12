@@ -3,6 +3,13 @@ class AlephError(Exception):
     pass
 
 
+class AlreadyForgottenError(AlephError):
+    def __init__(self, content, message="Object '{0}' has already been forgotten. It is recommended to delete the called object locally."):
+        self.item_hash = content['item_hash']
+        self.message = f"{message.format(self.item_hash)}"
+        super().__init__(self.message)
+
+
 class PostTypeIsNoClassError(AlephError):
     """Exception raised when a received post_type is not resolvable to any python class in current runtime."""
 

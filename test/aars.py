@@ -1,6 +1,6 @@
 from typing import List
 
-from src.aars import Record, Index
+from src.aars import Record, Index, AlreadyForgottenError
 import pytest
 
 
@@ -49,3 +49,13 @@ async def test_store_and_index_record_of_records():
     ])
     fetched_library = (await Library.query('The Library', 'Library.name'))[0]
     assert new_library == fetched_library
+
+
+@pytest.mark.asyncio
+async def test_forget_object():
+    forgettable_book = await Book.create(title="The Forgotten Book", author="Mechthild Gläser")  # I'm sorry.
+    await forgettable_book.forget()
+    assert forgettable_book.forgotten is True
+    assert len(await Book.fetch(forgettable_book.item_hash)) == 0
+    with pytest.raises(AlreadyForgottenError):
+        await forgettable_book.forget()

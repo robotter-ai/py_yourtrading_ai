@@ -8,6 +8,8 @@ from typing import Type, TypeVar, Dict, ClassVar, List, Optional, Set, Any, Unio
 import aleph_client.asynchronous as client
 from aleph_client.chains.ethereum import get_fallback_account
 
+from src.aars.exceptions import AlreadyForgottenError
+
 FALLBACK_ACCOUNT = get_fallback_account()
 AARS_TEST_CHANNEL = "AARS_TEST"
 
@@ -25,6 +27,7 @@ class Record(BaseModel, ABC):
 
     Records have an `indices` class attribute, which allows one to select an index and query it with a key.
     """
+    forgotten: bool = False
     item_hash: str = None
     current_revision: int = None
     revision_hashes: List[str] = []
@@ -38,7 +41,7 @@ class Record(BaseModel, ABC):
         """
         :return: content dictionary of the object, as it is to be stored on Aleph.
         """
-        return self.dict(exclude={'item_hash', 'current_revision', 'revision_hashes', 'indices'})
+        return self.dict(exclude={'item_hash', 'current_revision', 'revision_hashes', 'indices', 'forgotten'})
 
     async def update_revision_hashes(self: T):
         self.revision_hashes = [self.item_hash] + await fetch_revisions(type(self), ref=self.item_hash)
@@ -78,7 +81,11 @@ class Record(BaseModel, ABC):
         return self
 
     async def forget(self):
-        await forget_object(self)
+        if not self.forgotten:
+            await forget_object(self)
+            self.forgotten = True
+        else:
+            raise AlreadyForgottenError(self)
 
     @classmethod
     async def create(cls: Type[T], **kwargs) -> T:
