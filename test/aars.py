@@ -66,6 +66,6 @@ async def test_forget_object():
     forgettable_book = await Book.create(title="The Forgotten Book", author="Mechthild Gläser")  # I'm sorry.
     await forgettable_book.forget()
     assert forgettable_book.forgotten is True
-    assert len(await Book.fetch(forgettable_book.item_hash)) == 0
+    assert len(await Book.get(forgettable_book.item_hash)) == 0
     with pytest.raises(AlreadyForgottenError):
         await forgettable_book.forget()

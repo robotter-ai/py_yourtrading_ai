@@ -132,7 +132,7 @@ class Record(BaseModel, ABC):
         return obj
 
     @classmethod
-    async def fetch(cls: Type[T], hashes: Union[str, List[str]]) -> List[T]:
+    async def get(cls: Type[T], hashes: Union[str, List[str]]) -> List[T]:
         """
         Fetches one or more objects of given type by its/their item_hash[es].
         """
@@ -150,27 +150,37 @@ class Record(BaseModel, ABC):
     @classmethod
     async def query(cls: Type[T], **kwargs) -> List[T]:
         """
-        Queries a specified index by given key arguments in order to fetch applicable records.
-        An index is defined by '<object_property1>.<object_property2>.<et_cetera>'.
-        Whereby the properties are alphabetically sorted.
+        Queries an object by given properties through an index, in order to fetch applicable records.
+        An index name is defined as '<object_class>.[<object_properties>.]' and is initialized by creating
+        an Index instance, targeting a BaseRecord class with a list of properties.
+
+        >>> Index(MyRecord, ['property1', 'property2'])
+
+        This will create an index named 'MyRecord.property1.property2' which can be queried with:
+
+        >>> MyRecord.query(property1='value1', property2='value2')
+
+        If no index is defined for the given properties, an IndexError is raised.
+
+        TODO: If only a part of the keys is indexed for the given query, a fallback index is used and locally filtered.
         """
         sorted_kwargs = OrderedDict(sorted(kwargs.items()))
         sorted_keys = sorted_kwargs.keys()
         full_index_name = cls.__name__ + '.' + '.'.join(sorted_keys)
         if cls.__indices.get(full_index_name) is None:
-            key_subslices = subslices(list(sorted_kwargs.keys()))
+            key_subslices = subslices(list(sorted_kwargs.keys()))  # returns all plausible combinations of keys
             key_subslices = sorted(key_subslices, key=lambda x: len(x), reverse=True)
             for keys in key_subslices:
                 name = cls.__name__ + '.' + '.'.join(keys)
                 if cls.__indices.get(name):
                     warnings.warn(f'No index {full_index_name} found. Using {name} instead.')
-                    return await cls.__indices[name].access(
+                    # TODO: Manually loop through all the accessed records here and filter them
+                    return await cls.__indices[name].fetch(
                         OrderedDict({key: sorted_kwargs.get(key) for key in keys})
                     )
-                # TODO: Manually loop through all the records and filter them by missing keys
             raise IndexError(f'No index {full_index_name} found.')
         else:
-            return await cls.__indices[full_index_name].access(
+            return await cls.__indices[full_index_name].fetch(
                 OrderedDict({key: sorted_kwargs.get(key) for key in sorted_keys})
             )
 
@@ -199,7 +209,10 @@ class Index(Record):
     def __repr__(self):
         return f"{self.datatype.__name__}.{'.'.join(self.index_on)}"
 
-    async def access(self, keys: Union[OrderedDict[str], List[OrderedDict[str]]] = None) -> List[Record]:
+    async def fetch(self, keys: Union[OrderedDict[str], List[OrderedDict[str]]] = None) -> List[Record]:
+        """
+        Fetches records with given hash(es) from the index.
+        """
         hashes: Set[str]
         if keys is None:
             hashes = set(self.hashmap.values())
