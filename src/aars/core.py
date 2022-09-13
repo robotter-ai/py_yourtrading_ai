@@ -20,10 +20,13 @@ class Record(BaseModel, ABC):
     """
     A basic record which is persisted on Aleph decentralized storage.
 
-    Can be updated and forgotten. Revision numbers begin at 0 (original upload) and increment for each `upsert()` call.
+    Records can be updated: revision numbers begin at 0 (original upload) and increment for each `upsert()` call.
 
     Previous revisions can be restored by calling `fetch_revision(rev_no=<number>)` or `fetch_revision(
     rev_hash=<item_hash of inserted update>)`.
+
+    They can also be forgotten: Aleph will ask the network to forget given item, in order to allow for GDPR-compliant
+    applications.
 
     Records have an `indices` class attribute, which allows one to select an index and query it with a key.
     """
@@ -44,6 +47,9 @@ class Record(BaseModel, ABC):
         return self.dict(exclude={'item_hash', 'current_revision', 'revision_hashes', 'indices', 'forgotten'})
 
     async def update_revision_hashes(self: T):
+        """
+        Updates the list of available revision hashes, in order to fetch these.
+        """
         self.revision_hashes = [self.item_hash] + await fetch_revisions(type(self), ref=self.item_hash)
 
     async def fetch_revision(self: T, rev_no: int = None, rev_hash: str = None) -> T:
@@ -75,12 +81,19 @@ class Record(BaseModel, ABC):
         return self
 
     async def upsert(self):
+        """
+        Posts a new item to Aleph or amends it, if it was already posted. Will add the new revision
+        """
         await post_or_amend_object(self)
         if self.current_revision == 0:
             [index.add(self) for index in self.__indices.values()]
         return self
 
     async def forget(self):
+        """
+        Orders Aleph to forget a specific object with all its revisions.
+        The forgotten object should be deleted afterward, as it is useless now.
+        """
         if not self.forgotten:
             await forget_object(self)
             self.forgotten = True
@@ -89,11 +102,18 @@ class Record(BaseModel, ABC):
 
     @classmethod
     async def create(cls: Type[T], **kwargs) -> T:
+        """
+        Initializes and uploads a new item with given properties.
+        """
         obj = cls(**kwargs)
         return await obj.upsert()
 
     @classmethod
     async def from_post(cls: Type[T], post: Dict[str, Any]) -> T:
+        """
+        Initializes a record object from its raw Aleph data.
+        :post: Raw Aleph data.
+        """
         obj = cls(**post['content'])
         if post.get('ref') is None:
             obj.item_hash = post['item_hash']
@@ -108,12 +128,18 @@ class Record(BaseModel, ABC):
 
     @classmethod
     async def fetch(cls: Type[T], hashes: Union[str, List[str]]) -> List[T]:
+        """
+        Fetches one or more objects of given type by its/their item_hash[es].
+        """
         if not isinstance(hashes, List):
             hashes = [hashes]
         return await fetch_records(cls, list(hashes))
 
     @classmethod
     async def fetch_all(cls: Type[T]) -> List[T]:
+        """
+        Fetches all objects of given type.
+        """
         return await fetch_records(cls)
 
     @classmethod
@@ -164,7 +190,8 @@ class Index(Record):
 
 async def post_or_amend_object(obj: T, account=None, channel=None):
     """
-    Posts or amends an object to Aleph. If the object is already posted, it's ref is updated.
+    Posts or amends an object to Aleph. If the object is already posted, it's list of revision hashes is updated and the
+    object receives the latest revision number.
     :param obj: The object to post or amend.
     :param account: The account to post the object with. If None, will use the fallback account.
     :param channel: The channel to post the object to. If None, will use the TEST channel of the object.
@@ -177,15 +204,15 @@ async def post_or_amend_object(obj: T, account=None, channel=None):
     name = type(obj).__name__
     resp = await client.create_post(account, obj.content, post_type=name, channel=channel, ref=obj.item_hash)
     if obj.item_hash is None:
-        obj.item_hash = resp['item_hash']
-    obj.revision_hashes.append(resp['item_hash'])
+        obj.item_hash = resp.item_hash
+    obj.revision_hashes.append(resp.item_hash)
     obj.current_revision = len(obj.revision_hashes) - 1
 
 
-async def forget_object(obj: T, account: Account = None, channel: str = None):
+async def forget_objects(objs: List[T], account: Account = None, channel: str = None):
     """
-    Deletes an object from Aleph.
-    :param obj: The object to delete.
+    Forgets multiple objects from Aleph. All related revisions will be forgotten too.
+    :param objs: The objects to forget.
     :param account: The account to delete the object with. If None, will use the fallback account.
     :param channel: The channel to delete the object from. If None, will use the TEST channel of the object.
     """
@@ -193,7 +220,9 @@ async def forget_object(obj: T, account: Account = None, channel: str = None):
         account = FALLBACK_ACCOUNT
     if channel is None:
         channel = AARS_TEST_CHANNEL
-    hashes = [obj.item_hash] + obj.revision_hashes
+    hashes = []
+    for obj in objs:
+        hashes += [obj.item_hash] + obj.revision_hashes
     await client.forget(account, hashes, reason=None, channel=channel)
 
 
