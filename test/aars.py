@@ -18,7 +18,17 @@ class Library(Record):
 async def test_store_and_index():
     Index(Book, 'title')
     new_book = await Book.create(title='Atlas Shrugged', author='Ayn Rand')
-    fetched_book = (await Book.query('Atlas Shrugged', 'Book.title'))[0]
+    assert new_book.title == 'Atlas Shrugged'
+    assert new_book.author == 'Ayn Rand'
+    fetched_book = (await Book.query(title='Atlas Shrugged'))[0]
+    assert new_book == fetched_book
+
+
+@pytest.mark.asyncio
+async def test_multi_index():
+    Index(Book, ['title', 'author'])
+    new_book = await Book.create(title='Lila', author='Robert M. Pirsig')
+    fetched_book = (await Book.query(title='Lila', author='Robert M. Pirsig'))[0]
     assert new_book == fetched_book
 
 
@@ -42,12 +52,12 @@ async def test_amending_record():
 
 @pytest.mark.asyncio
 async def test_store_and_index_record_of_records():
-    Index(Library, 'name')
+    Index(Library, on='name')
     new_library = await Library.create(name='The Library', books=[
         await Book.create(title='Atlas Shrugged', author='Ayn Rand'),
         await Book.create(title='The Martian', author='Andy Weir')
     ])
-    fetched_library = (await Library.query('The Library', 'Library.name'))[0]
+    fetched_library = (await Library.query(name='The Library'))[0]
     assert new_library == fetched_library
 
 

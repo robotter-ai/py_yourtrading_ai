@@ -1,9 +1,14 @@
 from abc import ABC
 import asyncio
+import warnings
+from collections import OrderedDict
+from operator import itemgetter, attrgetter
+
+from src.aars.utils import subslices
 
 from aleph_client.types import Account
 from pydantic import BaseModel
-from typing import Type, TypeVar, Dict, ClassVar, List, Optional, Set, Any, Union
+from typing import Type, TypeVar, Dict, ClassVar, List, Optional, Set, Any, Union, Tuple
 
 import aleph_client.asynchronous as client
 from aleph_client.chains.ethereum import get_fallback_account
@@ -95,7 +100,7 @@ class Record(BaseModel, ABC):
         The forgotten object should be deleted afterward, as it is useless now.
         """
         if not self.forgotten:
-            await forget_object(self)
+            await forget_objects([self])
             self.forgotten = True
         else:
             raise AlreadyForgottenError(self)
@@ -143,12 +148,31 @@ class Record(BaseModel, ABC):
         return await fetch_records(cls)
 
     @classmethod
-    async def query(cls: Type[T], keys: Union[str, List[str]], index: Optional[str] = 'item_hash') -> List[T]:
-        if not isinstance(keys, List):
-            keys = [keys]
-        if cls.__indices.get(index) is None:
-            raise ValueError(f'No index "{index}" found for {cls}')
-        return await cls.__indices[index].fetch(keys)
+    async def query(cls: Type[T], **kwargs) -> List[T]:
+        """
+        Queries a specified index by given key arguments in order to fetch applicable records.
+        An index is defined by '<object_property1>.<object_property2>.<et_cetera>'.
+        Whereby the properties are alphabetically sorted.
+        """
+        sorted_kwargs = OrderedDict(sorted(kwargs.items()))
+        sorted_keys = sorted_kwargs.keys()
+        full_index_name = cls.__name__ + '.' + '.'.join(sorted_keys)
+        if cls.__indices.get(full_index_name) is None:
+            key_subslices = subslices(list(sorted_kwargs.keys()))
+            key_subslices = sorted(key_subslices, key=lambda x: len(x), reverse=True)
+            for keys in key_subslices:
+                name = cls.__name__ + '.' + '.'.join(keys)
+                if cls.__indices.get(name):
+                    warnings.warn(f'No index {full_index_name} found. Using {name} instead.')
+                    return await cls.__indices[name].access(
+                        OrderedDict({key: sorted_kwargs.get(key) for key in keys})
+                    )
+                # TODO: Manually loop through all the records and filter them by missing keys
+            raise IndexError(f'No index {full_index_name} found.')
+        else:
+            return await cls.__indices[full_index_name].access(
+                OrderedDict({key: sorted_kwargs.get(key) for key in sorted_keys})
+            )
 
     @classmethod
     def add_index(cls: Type[T], index: 'Index') -> None:
@@ -156,36 +180,41 @@ class Record(BaseModel, ABC):
 
 
 class Index(Record):
-    # TODO: multi-key index
     """
     Class to define Indices.
     """
     datatype: Type[T]
-    index_on: str
-    hashmap: Dict[str, str] = {}
+    index_on: List[str]
+    hashmap: Dict[Tuple, str] = {}
 
-    def __init__(self, datatype: Type[T], index_on: str):
-        super(Index, self).__init__(datatype=datatype, index_on=index_on)
+    def __init__(self, datatype: Type[T], on: Union[str, List[str]]):
+        if isinstance(on, str):
+            on = [on]
+        super(Index, self).__init__(datatype=datatype, index_on=sorted(on))
         datatype.add_index(self)
 
     def __str__(self):
-        return f"Index({self.datatype.__name__}.{self.index_on})"
+        return f"Index({self.datatype.__name__}.{'.'.join(self.index_on)})"
 
     def __repr__(self):
-        return f"{self.datatype.__name__}.{self.index_on}"
+        return f"{self.datatype.__name__}.{'.'.join(self.index_on)}"
 
-    async def fetch(self, keys: List[str] = None) -> List[Record]:
+    async def access(self, keys: Union[OrderedDict[str], List[OrderedDict[str]]] = None) -> List[Record]:
         hashes: Set[str]
         if keys is None:
             hashes = set(self.hashmap.values())
+        elif isinstance(keys, OrderedDict):
+            hashes = set([self.hashmap.get(tuple(keys.values())), ])
+        elif isinstance(keys, List):
+            hashes = set([self.hashmap.get(tuple(key.values())) for key in keys])
         else:
-            hashes = set([self.hashmap[key] for key in keys])
+            hashes = set()
 
         return await fetch_records(self.datatype, list(hashes))
 
     def add(self, obj: T):
         assert isinstance(obj, Record)
-        self.hashmap[getattr(obj, self.index_on)] = obj.item_hash
+        self.hashmap[attrgetter(*self.index_on)(obj)] = obj.item_hash
 
 
 async def post_or_amend_object(obj: T, account=None, channel=None):

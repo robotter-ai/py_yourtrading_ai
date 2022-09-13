@@ -18,7 +18,7 @@ Index(Book, 'title')
 new_book = await Book.create(title='Atlas Shrugged', author='Ayn Rand')
 
 # assert the index works
-assert new_book == (await Book.query('Atlas Shrugged', 'Book.title'))[0]
+assert new_book == (await Book.query(title='Atlas Shrugged'))[0]
 ```
 
 
@@ -26,7 +26,7 @@ assert new_book == (await Book.query('Atlas Shrugged', 'Book.title'))[0]
 - [x] Basic CRUD operations
 - [ ] Basic indexing operations
   - [x] Single-key indexing 
-  - [ ] Multi-key indexing
+  - [x] Multi-key indexing
 - [ ] Basic search/filtering operations
 - [ ] Handle pagination
 - [ ] Handle sorting
