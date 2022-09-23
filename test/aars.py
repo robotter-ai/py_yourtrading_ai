@@ -1,7 +1,18 @@
+import asyncio
 from typing import List
 
 from src.aars import Record, Index, AlreadyForgottenError
 import pytest
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = asyncio.new_event_loop()
+    yield loop
+    loop.close()
 
 
 class Book(Record):
@@ -53,10 +64,11 @@ async def test_amending_record():
 @pytest.mark.asyncio
 async def test_store_and_index_record_of_records():
     Index(Library, on='name')
-    new_library = await Library.create(name='The Library', books=[
-        await Book.create(title='Atlas Shrugged', author='Ayn Rand'),
-        await Book.create(title='The Martian', author='Andy Weir')
-    ])
+    books = await asyncio.gather(
+        Book.create(title='Atlas Shrugged', author='Ayn Rand'),
+        Book.create(title='The Martian', author='Andy Weir')
+    )
+    new_library = await Library.create(name='The Library', books=books)
     fetched_library = (await Library.query(name='The Library'))[0]
     assert new_library == fetched_library
 

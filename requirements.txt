@@ -2,4 +2,5 @@ pydantic~=1.9.0
 certifi~=2022.6.15
 aiohttp~=3.8.1
 pytest~=7.1.2
+pytest-xdist
 git+https://github.com/aleph-im/aleph-client.git
