@@ -91,7 +91,7 @@ class Record(BaseModel, ABC):
         """
         await post_or_amend_object(self)
         if self.current_revision == 0:
-            [index.add(self) for index in self.__indices.values()]
+            [index.add(self) for index in self.get_indices()]
         return self
 
     async def forget(self):
@@ -188,19 +188,23 @@ class Record(BaseModel, ABC):
     def add_index(cls: Type[T], index: 'Index') -> None:
         cls.__indices[repr(index)] = index
 
+    @classmethod
+    def get_indices(cls: Type[T]) -> List['Index']:
+        return [index for index in cls.__indices.values() if index.datatype == cls]
+
 
 class Index(Record):
     """
     Class to define Indices.
     """
     datatype: Type[T]
-    index_on: Tuple[str]
+    index_on: List[str]
     hashmap: Dict[Union[str, Tuple], str] = {}
 
     def __init__(self, datatype: Type[T], on: Union[str, List[str], Tuple[str]]):
         if isinstance(on, str):
             on = [on]
-        super(Index, self).__init__(datatype=datatype, index_on=tuple(sorted(on)))
+        super(Index, self).__init__(datatype=datatype, index_on=sorted(on))
         datatype.add_index(self)
 
     def __str__(self):
