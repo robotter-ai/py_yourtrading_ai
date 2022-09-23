@@ -194,13 +194,13 @@ class Index(Record):
     Class to define Indices.
     """
     datatype: Type[T]
-    index_on: List[str]
-    hashmap: Dict[Tuple, str] = {}
+    index_on: Tuple[str]
+    hashmap: Dict[Union[str, Tuple], str] = {}
 
-    def __init__(self, datatype: Type[T], on: Union[str, List[str]]):
+    def __init__(self, datatype: Type[T], on: Union[str, List[str], Tuple[str]]):
         if isinstance(on, str):
             on = [on]
-        super(Index, self).__init__(datatype=datatype, index_on=sorted(on))
+        super(Index, self).__init__(datatype=datatype, index_on=tuple(sorted(on)))
         datatype.add_index(self)
 
     def __str__(self):
@@ -217,7 +217,10 @@ class Index(Record):
         if keys is None:
             hashes = set(self.hashmap.values())
         elif isinstance(keys, OrderedDict):
-            hashes = set([self.hashmap.get(tuple(keys.values())), ])
+            if len(keys.values()) == 1:
+                hashes = {self.hashmap.get(list(keys.values())[0])}
+            else:
+                hashes = set([self.hashmap.get(tuple(keys.values())), ])
         elif isinstance(keys, List):
             hashes = set([self.hashmap.get(tuple(key.values())) for key in keys])
         else:
