@@ -81,3 +81,14 @@ async def test_forget_object():
     assert len(await Book.get(forgettable_book.item_hash)) == 0
     with pytest.raises(AlreadyForgottenError):
         await forgettable_book.forget()
+
+@pytest.mark.asyncio
+async def test_store_and_wrong_query():
+    Index(Book, 'title')
+    new_book = await Book.create(title='Atlas Shrugged', author='Ayn Rand')
+    assert new_book.title == 'Atlas Shrugged'
+    assert new_book.author == 'Ayn Rand'
+    fetched_book = (await Book.query(title='Atlas Shrugged',index="index"))
+    assert len(fetched_book) == 0
+
+

@@ -9,9 +9,8 @@ import pandas as pd
 import aleph_client
 import aleph_client.asynchronous
 from aleph_client.chains.ethereum import get_fallback_account
-
-from data_upload.batch import post_all_to_aleph_async
-from data_upload.data_utils import save_to_file
+from batch import post_all_to_aleph_async
+from data_utils import save_to_file
 
 
 def create_ssl_context(*args, **kwargs):

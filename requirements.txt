@@ -4,7 +4,6 @@ aleph-client @ git+https://github.com/aleph-im/aleph-client.git@5e7c2bd6003e028e
 aleph-message==0.2.3
 asn1crypto==1.5.1
 async-timeout==4.0.2
-bitarray==1.2.2
 cffi==1.15.1
 charset-normalizer==2.1.0
 click==8.1.3

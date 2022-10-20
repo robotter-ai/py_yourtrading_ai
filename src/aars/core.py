@@ -164,24 +164,46 @@ class Record(BaseModel, ABC):
 
         TODO: If only a part of the keys is indexed for the given query, a fallback index is used and locally filtered.
         """
-        sorted_kwargs = OrderedDict(sorted(kwargs.items()))
-        sorted_keys = sorted_kwargs.keys()
+        import inspect
+        #Atlas Shrugged3
+        sorted_items = OrderedDict(sorted(kwargs.items()))
+        # OrderedDict([('author', 'Ayn Rand'), ('title', 'Atlas Shrugged1')])
+        sorted_keys = sorted_items.keys()
+        # dict_keys(['author', 'title']) sortedKeys  Sort the keys
         full_index_name = cls.__name__ + '.' + '.'.join(sorted_keys)
+        # Concatinate with the the class name book   Book.author.title
+        returned_items = list()
         if cls.__indices.get(full_index_name) is None:
-            key_subslices = subslices(list(sorted_kwargs.keys()))  # returns all plausible combinations of keys
+            key_subslices = subslices(list(sorted_items.keys()))
+            # returns all plausible combinations of keys
             key_subslices = sorted(key_subslices, key=lambda x: len(x), reverse=True)
+
+          # key_subslices [['author', 'title'], ['author'], ['title']]
             for keys in key_subslices:
                 name = cls.__name__ + '.' + '.'.join(keys)
+                # cls.indices Book
                 if cls.__indices.get(name):
                     warnings.warn(f'No index {full_index_name} found. Using {name} instead.')
                     # TODO: Manually loop through all the accessed records here and filter them
-                    return await cls.__indices[name].fetch(
-                        OrderedDict({key: sorted_kwargs.get(key) for key in keys})
+
+                    list_of_items_returned_from_fetch = await cls.__indices[name].fetch(
+                        OrderedDict({key: sorted_items.get(key) for key in keys})
                     )
+                    #list_of_items_returned_from_fetch = [Book(9ed87061929910c75e5e99e8ca3b46c57e6651ea4e8ee9cfec103315ce2d8d95)]
+                    returned_items.extend(list_of_items_returned_from_fetch)
+            final_items = list()
+            # TODO: Manually loop through all the accessed records here and filter them
+            for item in returned_items:
+                # eliminate the item which does not full fil this properties
+                class_properties = vars(item)
+                required_class_properties = {key: class_properties.get(key) for key in sorted_keys}
+                if required_class_properties == dict(sorted_items):
+                    final_items.append(item)
+            return final_items
             raise IndexError(f'No index {full_index_name} found.')
         else:
             return await cls.__indices[full_index_name].fetch(
-                OrderedDict({key: sorted_kwargs.get(key) for key in sorted_keys})
+                OrderedDict({key: sorted_items.get(key) for key in sorted_keys})
             )
 
     @classmethod
@@ -213,7 +235,7 @@ class Index(Record):
     def __repr__(self):
         return f"{self.datatype.__name__}.{'.'.join(self.index_on)}"
 
-    async def fetch(self, keys: Union[OrderedDict[str], List[OrderedDict[str]]] = None) -> List[Record]:
+    async def fetch(self, keys: Union[OrderedDict, List[OrderedDict]] = None) -> List[Record]:
         """
         Fetches records with given hash(es) from the index.
         """
@@ -231,6 +253,9 @@ class Index(Record):
             hashes = set()
 
         return await fetch_records(self.datatype, list(hashes))
+
+    def get(self, obj):
+        return self.hashmap.get(attrgetter(*self.index_on)(obj))
 
     def add(self, obj: T):
         assert isinstance(obj, Record)
@@ -309,3 +334,5 @@ async def fetch_revisions(datatype: Type[T],
         channels = [AARS_TEST_CHANNEL]
     resp = await client.get_posts(refs=[ref], channels=channels, types=[datatype.__name__], addresses=owners)
     return list(reversed([post['item_hash'] for post in resp['posts']]))  # reverse to get the oldest first
+
+

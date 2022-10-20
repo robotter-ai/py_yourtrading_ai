@@ -7,7 +7,7 @@ import aleph_client.asynchronous
 import certifi
 import pandas as pd
 
-from data_upload.data_utils import clean_time_duplicates
+from data_utils import clean_time_duplicates
 
 
 def get_download_url(symbol, interval="hourly"):
