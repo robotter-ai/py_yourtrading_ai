@@ -1,4 +1,4 @@
-# AARS: Aleph Active Record SDK
+# ARS: Aleph Active Record SDK
 
 AARS's goal is to provide simple guardrails for the creation of document databases, based on Aleph's decentralized storage API. It provides tools for modelling, creating and managing decentralized databases, and a set of extensions for the [Aleph Python SDK](https://github.com/aleph-im/aleph-client).
 

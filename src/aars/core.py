@@ -198,7 +198,7 @@ class Record(BaseModel, ABC):
                 class_properties = vars(item)
                 required_class_properties = {key: class_properties.get(key) for key in sorted_keys}
                 if required_class_properties == dict(sorted_items):
-                    final_items.append(item)
+                    final_items.append(item)    
             return final_items
             raise IndexError(f'No index {full_index_name} found.')
         else:

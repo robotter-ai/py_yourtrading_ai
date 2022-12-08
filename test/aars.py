@@ -1,7 +1,7 @@
 import asyncio
 from typing import List
 
-from src.aars import Record, Index, AlreadyForgottenError
+from src.aars import Record, AlreadyForgottenError,Index
 import pytest
 
 
@@ -90,5 +90,6 @@ async def test_store_and_wrong_query():
     assert new_book.author == 'Ayn Rand'
     fetched_book = (await Book.query(title='Atlas Shrugged',index="index"))
     assert len(fetched_book) == 0
+
 
 
