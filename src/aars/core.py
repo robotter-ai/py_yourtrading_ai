@@ -162,9 +162,8 @@ class Record(BaseModel, ABC):
 
         If no index is defined for the given properties, an IndexError is raised.
 
-        TODO: If only a part of the keys is indexed for the given query, a fallback index is used and locally filtered.
+        If only a part of the keys is indexed for the given query, a fallback index is used and locally filtered.
         """
-        import inspect
         #Atlas Shrugged3
         sorted_items = OrderedDict(sorted(kwargs.items()))
         # OrderedDict([('author', 'Ayn Rand'), ('title', 'Atlas Shrugged1')])
@@ -172,34 +171,26 @@ class Record(BaseModel, ABC):
         # dict_keys(['author', 'title']) sortedKeys  Sort the keys
         full_index_name = cls.__name__ + '.' + '.'.join(sorted_keys)
         # Concatinate with the the class name book   Book.author.title
-        returned_items = list()
         if cls.__indices.get(full_index_name) is None:
             key_subslices = subslices(list(sorted_items.keys()))
             # returns all plausible combinations of keys
             key_subslices = sorted(key_subslices, key=lambda x: len(x), reverse=True)
-
-          # key_subslices [['author', 'title'], ['author'], ['title']]
             for keys in key_subslices:
                 name = cls.__name__ + '.' + '.'.join(keys)
                 # cls.indices Book
                 if cls.__indices.get(name):
                     warnings.warn(f'No index {full_index_name} found. Using {name} instead.')
-                    # TODO: Manually loop through all the accessed records here and filter them
-
                     list_of_items_returned_from_fetch = await cls.__indices[name].fetch(
                         OrderedDict({key: sorted_items.get(key) for key in keys})
                     )
-                    #list_of_items_returned_from_fetch = [Book(9ed87061929910c75e5e99e8ca3b46c57e6651ea4e8ee9cfec103315ce2d8d95)]
-                    returned_items.extend(list_of_items_returned_from_fetch)
-            final_items = list()
-            # TODO: Manually loop through all the accessed records here and filter them
-            for item in returned_items:
-                # eliminate the item which does not full fil this properties
-                class_properties = vars(item)
-                required_class_properties = {key: class_properties.get(key) for key in sorted_keys}
-                if required_class_properties == dict(sorted_items):
-                    final_items.append(item)
-            return final_items
+                    final_items = list()
+                    for item in list_of_items_returned_from_fetch:
+                        # eliminate the item which does not fulfill this properties
+                        class_properties = vars(item)
+                        required_class_properties = {key: class_properties.get(key) for key in sorted_keys}
+                        if required_class_properties == dict(sorted_items):
+                            final_items.append(item)
+                    return final_items
             raise IndexError(f'No index {full_index_name} found.')
         else:
             return await cls.__indices[full_index_name].fetch(
